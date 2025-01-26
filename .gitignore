@@ -1,0 +1,8 @@
+build/
+.vs/
+*.exe
+*.pdb
+*.obj
+*.ilk
+*.VC.db
+*.VC.VC.opendb
