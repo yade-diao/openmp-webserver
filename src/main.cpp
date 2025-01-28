@@ -19,9 +19,14 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <iostream>
+#include <mutex>
+#include <queue>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -144,12 +149,118 @@ void handle_one_client(SOCKET clientSock) {
     ::closesocket(clientSock);
 }
 
+// 固定大小线程池：主线程只负责 accept，worker 并行处理连接。
+class ClientThreadPool {
+public:
+    ClientThreadPool(std::size_t workerCount, std::size_t maxQueueSize)
+        : maxQueueSize_(maxQueueSize) {
+        if (workerCount == 0) {
+            workerCount = 1;
+        }
+        workers_.reserve(workerCount);
+        for (std::size_t i = 0; i < workerCount; ++i) {
+            workers_.emplace_back([this]() { worker_loop(); });
+        }
+    }
+
+    ~ClientThreadPool() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopping_ = true;
+        }
+        cv_.notify_all();
+        for (auto& t : workers_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+
+        // 兜底清理：如果仍有未处理连接，统一关闭。
+        while (!tasks_.empty()) {
+            ::shutdown(tasks_.front(), SD_BOTH);
+            ::closesocket(tasks_.front());
+            tasks_.pop();
+        }
+    }
+
+    bool enqueue(SOCKET clientSock) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopping_) {
+                return false;
+            }
+            if (tasks_.size() >= maxQueueSize_) {
+                return false;
+            }
+            tasks_.push(clientSock);
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+private:
+    void worker_loop() {
+        for (;;) {
+            SOCKET clientSock = INVALID_SOCKET;
+
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return stopping_ || !tasks_.empty(); });
+
+                if (stopping_ && tasks_.empty()) {
+                    return;
+                }
+
+                clientSock = tasks_.front();
+                tasks_.pop();
+            }
+
+            handle_one_client(clientSock);
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    std::queue<SOCKET> tasks_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool stopping_{false};
+    std::size_t maxQueueSize_;
+};
+
+void reply_server_busy_and_close(SOCKET clientSock) {
+    const char* body = "Server busy\n";
+    const int bodyLen = static_cast<int>(std::strlen(body));
+
+    std::string resp;
+    resp += "HTTP/1.1 503 Service Unavailable\r\n";
+    resp += "Content-Type: text/plain; charset=utf-8\r\n";
+    resp += "Content-Length: " + std::to_string(bodyLen) + "\r\n";
+    resp += "Connection: close\r\n";
+    resp += "\r\n";
+    resp += body;
+
+    ::send(clientSock, resp.data(), static_cast<int>(resp.size()), 0);
+    ::shutdown(clientSock, SD_BOTH);
+    ::closesocket(clientSock);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     uint16_t port = 8080;
+    std::size_t workerCount = std::thread::hardware_concurrency();
+    if (workerCount == 0) {
+        workerCount = 8;
+    }
+
     if (argc >= 2) {
         port = static_cast<uint16_t>(std::atoi(argv[1]));
+    }
+    if (argc >= 3) {
+        const int parsed = std::atoi(argv[2]);
+        if (parsed > 0) {
+            workerCount = static_cast<std::size_t>(parsed);
+        }
     }
 
     try {
@@ -158,8 +269,10 @@ int main(int argc, char** argv) {
 
         // 创建监听 socket（socket + bind + listen）。
         SOCKET listenSock = create_listen_socket(port);
+        ClientThreadPool pool(workerCount, 8192);
 
-        std::cout << "Listening on http://127.0.0.1:" << port << "\n";
+        std::cout << "Listening on http://127.0.0.1:" << port
+              << " with " << workerCount << " worker threads\n";
 
         // 7) accept(): 循环等待客户端连接。
         // accept 会“阻塞”等到有人连上；成功后返回一个新的 socket（clientSock）。
@@ -179,10 +292,10 @@ int main(int argc, char** argv) {
             ::inet_ntop(AF_INET, &clientAddr.sin_addr, ip, sizeof(ip));
             std::cout << "Accepted client " << ip << ":" << ntohs(clientAddr.sin_port) << "\n";
 
-            // 单线程版本：处理完一个客户端再回到 accept。
-            // 高并发扩展点：把 handle_one_client(clientSock) 放进线程池队列，
-            //              或者改为 IOCP/异步 I/O。
-            handle_one_client(clientSock);
+            // 把连接投递到 worker 队列；满载时快速返回 503，避免无限堆积。
+            if (!pool.enqueue(clientSock)) {
+                reply_server_busy_and_close(clientSock);
+            }
         }
 
         // 正常情况下不会走到这里（上面是无限循环）。
