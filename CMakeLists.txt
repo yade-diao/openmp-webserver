@@ -13,6 +13,7 @@ add_executable(openmp_webserver
     src/main.cpp
     src/thread_pool.cpp
     src/epoll_server.cpp
+    src/http_parser.cpp
 )
 
 target_compile_options(openmp_webserver PRIVATE -Wall -Wextra -Wpedantic)

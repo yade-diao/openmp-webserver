@@ -17,12 +17,11 @@ namespace {
 constexpr int kMaxEvents = 1024;
 constexpr int kReadBufferSize = 4096;
 
-std::string buildSimpleResponse() {
-    static const char* body = "Hello from epoll server\n";
-    const int bodyLen = static_cast<int>(std::strlen(body));
+std::string buildResponse(const std::string& body, const std::string& status = "200 OK") {
+    const int bodyLen = static_cast<int>(body.size());
 
     std::string resp;
-    resp += "HTTP/1.1 200 OK\r\n";
+    resp += "HTTP/1.1 " + status + "\r\n";
     resp += "Content-Type: text/plain; charset=utf-8\r\n";
     resp += "Content-Length: " + std::to_string(bodyLen) + "\r\n";
     resp += "Connection: close\r\n\r\n";
@@ -191,12 +190,12 @@ void EpollServer::handleClientReadable(int fd) {
 
 void EpollServer::handleClientReactor(int fd) {
     char buf[kReadBufferSize];
-    std::string req;
+    std::string reqChunk;
 
     for (;;) {
         const int n = ::recv(fd, buf, sizeof(buf), 0);
         if (n > 0) {
-            req.append(buf, buf + n);
+            reqChunk.append(buf, buf + n);
             if (triggerMode_ == TriggerMode::LT) {
                 break;
             }
@@ -219,67 +218,96 @@ void EpollServer::handleClientReactor(int fd) {
         return;
     }
 
-    if (!req.empty()) {
-        sendAllAndClose(fd, buildSimpleResponse());
+    if (reqChunk.empty()) {
+        return;
     }
+
+    std::string allData;
+    {
+        std::lock_guard<std::mutex> lock(connMutex_);
+        allData = readBuffers_[fd] + reqChunk;
+        readBuffers_[fd] = allData;
+    }
+
+    processAndReply(fd, allData);
 }
 
-void EpollServer::handleClientProactor(int fd) {
-    char buf[kReadBufferSize];
-    std::string req;
+void EpollServer::processAndReply(int fd, const std::string& data) {
+    HttpRequest req;
+    std::size_t consumed = 0;
+    const ParseResult result = parser_.parse(data, req, consumed);
 
-    for (;;) {
-        const int n = ::recv(fd, buf, sizeof(buf), 0);
-        if (n > 0) {
-            req.append(buf, buf + n);
-            if (triggerMode_ == TriggerMode::LT) {
-                break;
-            }
-            continue;
-        }
-
-        if (n == 0) {
-            closeClient(fd);
-            return;
-        }
-
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            break;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
-
-        closeClient(fd);
+    if (result == ParseResult::Incomplete) {
         return;
     }
 
-    if (req.empty()) {
+    if (result == ParseResult::Error) {
+        {
+            std::lock_guard<std::mutex> lock(connMutex_);
+            readBuffers_.erase(fd);
+        }
+        sendAllAndClose(fd, buildResponse("Bad Request\n", "400 Bad Request"));
         return;
     }
 
     {
         std::lock_guard<std::mutex> lock(connMutex_);
-        readBuffers_[fd].append(req);
+        readBuffers_.erase(fd);
     }
 
-    // 模拟 Proactor：主线程先读完数据，再把“业务处理+回写”投递给线程池。
-    threadPool_.enqueue([this, fd]() {
-        std::string data;
-        {
-            std::lock_guard<std::mutex> lock(connMutex_);
-            auto it = readBuffers_.find(fd);
-            if (it != readBuffers_.end()) {
-                data.swap(it->second);
-                readBuffers_.erase(it);
+    if (req.method == "GET") {
+        sendAllAndClose(fd, buildResponse("GET request parsed successfully\n"));
+    } else if (req.method == "POST") {
+        sendAllAndClose(fd, buildResponse("POST request parsed successfully\n"));
+    } else {
+        sendAllAndClose(fd, buildResponse("Method Not Allowed\n", "405 Method Not Allowed"));
+    }
+}
+
+void EpollServer::handleClientProactor(int fd) {
+    char buf[kReadBufferSize];
+    std::string reqChunk;
+
+    for (;;) {
+        const int n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n > 0) {
+            reqChunk.append(buf, buf + n);
+            if (triggerMode_ == TriggerMode::LT) {
+                break;
             }
+            continue;
         }
 
-        if (data.empty()) {
+        if (n == 0) {
+            closeClient(fd);
             return;
         }
 
-        sendAllAndClose(fd, buildSimpleResponse());
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+
+        closeClient(fd);
+        return;
+    }
+
+    if (reqChunk.empty()) {
+        return;
+    }
+
+    std::string allData;
+    {
+        std::lock_guard<std::mutex> lock(connMutex_);
+        readBuffers_[fd].append(reqChunk);
+        allData = readBuffers_[fd];
+    }
+
+    // 模拟 Proactor：主线程先读完数据，再把“业务处理+回写”投递给线程池。
+    threadPool_.enqueue([this, fd, allData]() {
+        processAndReply(fd, allData);
     });
 }
 
