@@ -34,6 +34,8 @@ int main(int argc, char** argv) {
     std::size_t workerCount = std::thread::hardware_concurrency();
     TriggerMode triggerMode = TriggerMode::LT;
     EventModel eventModel = EventModel::Reactor;
+    std::string staticRoot = "./static";
+    std::string dbPath = "./webserver.db";
 
     if (workerCount == 0) {
         workerCount = 8;
@@ -54,13 +56,19 @@ int main(int argc, char** argv) {
     if (argc >= 5) {
         eventModel = parseEventModel(argv[4]);
     }
+    if (argc >= 6) {
+        staticRoot = argv[5];
+    }
+    if (argc >= 7) {
+        dbPath = argv[6];
+    }
 
     try {
-        EpollServer server(port, workerCount, triggerMode, eventModel);
+        EpollServer server(port, workerCount, triggerMode, eventModel, dbPath, staticRoot);
         server.run();
     } catch (const std::exception& ex) {
         std::cerr << "Fatal: " << ex.what() << "\n";
-        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor]\n";
+        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath]\n";
         return 1;
     }
 

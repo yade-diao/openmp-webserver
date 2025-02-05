@@ -2,6 +2,7 @@
 
 #include "http_parser.h"
 #include "thread_pool.h"
+#include "web_app.h"
 
 #include <cstdint>
 #include <mutex>
@@ -20,7 +21,12 @@ enum class EventModel {
 
 class EpollServer {
 public:
-    EpollServer(uint16_t port, std::size_t workerCount, TriggerMode triggerMode, EventModel eventModel);
+    EpollServer(uint16_t port,
+                std::size_t workerCount,
+                TriggerMode triggerMode,
+                EventModel eventModel,
+                const std::string& dbPath,
+                const std::string& staticRoot);
     ~EpollServer();
 
     EpollServer(const EpollServer&) = delete;
@@ -50,6 +56,7 @@ private:
     EventModel eventModel_;
     ThreadPool threadPool_;
     HttpParser parser_;
+    WebApp app_;
 
     std::mutex connMutex_;
     std::unordered_map<int, std::string> readBuffers_;

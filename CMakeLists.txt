@@ -14,7 +14,9 @@ add_executable(openmp_webserver
     src/thread_pool.cpp
     src/epoll_server.cpp
     src/http_parser.cpp
+    src/user_repository.cpp
+    src/web_app.cpp
 )
 
 target_compile_options(openmp_webserver PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(openmp_webserver PRIVATE pthread)
+target_link_libraries(openmp_webserver PRIVATE pthread sqlite3)

@@ -17,12 +17,14 @@ namespace {
 constexpr int kMaxEvents = 1024;
 constexpr int kReadBufferSize = 4096;
 
-std::string buildResponse(const std::string& body, const std::string& status = "200 OK") {
+std::string buildResponse(const std::string& body,
+                          const std::string& contentType = "text/plain; charset=utf-8",
+                          const std::string& status = "200 OK") {
     const int bodyLen = static_cast<int>(body.size());
 
     std::string resp;
     resp += "HTTP/1.1 " + status + "\r\n";
-    resp += "Content-Type: text/plain; charset=utf-8\r\n";
+    resp += "Content-Type: " + contentType + "\r\n";
     resp += "Content-Length: " + std::to_string(bodyLen) + "\r\n";
     resp += "Connection: close\r\n\r\n";
     resp += body;
@@ -48,11 +50,17 @@ void sendAllAndClose(int fd, const std::string& response) {
 }
 } // namespace
 
-EpollServer::EpollServer(uint16_t port, std::size_t workerCount, TriggerMode triggerMode, EventModel eventModel)
+EpollServer::EpollServer(uint16_t port,
+                                                 std::size_t workerCount,
+                                                 TriggerMode triggerMode,
+                                                 EventModel eventModel,
+                                                 const std::string& dbPath,
+                                                 const std::string& staticRoot)
     : port_(port),
       triggerMode_(triggerMode),
       eventModel_(eventModel),
-      threadPool_(workerCount) {}
+            threadPool_(workerCount),
+            app_(dbPath, staticRoot) {}
 
 EpollServer::~EpollServer() {
     if (listenFd_ >= 0) {
@@ -246,7 +254,7 @@ void EpollServer::processAndReply(int fd, const std::string& data) {
             std::lock_guard<std::mutex> lock(connMutex_);
             readBuffers_.erase(fd);
         }
-        sendAllAndClose(fd, buildResponse("Bad Request\n", "400 Bad Request"));
+        sendAllAndClose(fd, buildResponse("Bad Request\n", "text/plain; charset=utf-8", "400 Bad Request"));
         return;
     }
 
@@ -255,13 +263,8 @@ void EpollServer::processAndReply(int fd, const std::string& data) {
         readBuffers_.erase(fd);
     }
 
-    if (req.method == "GET") {
-        sendAllAndClose(fd, buildResponse("GET request parsed successfully\n"));
-    } else if (req.method == "POST") {
-        sendAllAndClose(fd, buildResponse("POST request parsed successfully\n"));
-    } else {
-        sendAllAndClose(fd, buildResponse("Method Not Allowed\n", "405 Method Not Allowed"));
-    }
+    const HttpResponse resp = app_.handle(req);
+    sendAllAndClose(fd, buildResponse(resp.body, resp.contentType, resp.status));
 }
 
 void EpollServer::handleClientProactor(int fd) {
