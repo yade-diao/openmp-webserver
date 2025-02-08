@@ -27,6 +27,16 @@ EventModel parseEventModel(const std::string& input) {
     }
     throw std::invalid_argument("event model must be reactor or proactor");
 }
+
+LogMode parseLogMode(const std::string& input) {
+    if (input == "sync") {
+        return LogMode::Sync;
+    }
+    if (input == "async") {
+        return LogMode::Async;
+    }
+    throw std::invalid_argument("log mode must be sync or async");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -36,6 +46,8 @@ int main(int argc, char** argv) {
     EventModel eventModel = EventModel::Reactor;
     std::string staticRoot = "./static";
     std::string dbPath = "./webserver.db";
+    std::string logPath = "./server.log";
+    LogMode logMode = LogMode::Sync;
 
     if (workerCount == 0) {
         workerCount = 8;
@@ -62,13 +74,19 @@ int main(int argc, char** argv) {
     if (argc >= 7) {
         dbPath = argv[6];
     }
+    if (argc >= 8) {
+        logPath = argv[7];
+    }
+    if (argc >= 9) {
+        logMode = parseLogMode(argv[8]);
+    }
 
     try {
-        EpollServer server(port, workerCount, triggerMode, eventModel, dbPath, staticRoot);
+        EpollServer server(port, workerCount, triggerMode, eventModel, dbPath, staticRoot, logPath, logMode);
         server.run();
     } catch (const std::exception& ex) {
         std::cerr << "Fatal: " << ex.what() << "\n";
-        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath]\n";
+        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async]\n";
         return 1;
     }
 

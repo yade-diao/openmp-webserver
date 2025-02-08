@@ -55,12 +55,15 @@ EpollServer::EpollServer(uint16_t port,
                                                  TriggerMode triggerMode,
                                                  EventModel eventModel,
                                                  const std::string& dbPath,
-                                                 const std::string& staticRoot)
+                                                 const std::string& staticRoot,
+                                                 const std::string& logPath,
+                                                 LogMode logMode)
     : port_(port),
       triggerMode_(triggerMode),
       eventModel_(eventModel),
             threadPool_(workerCount),
-            app_(dbPath, staticRoot) {}
+            app_(dbPath, staticRoot),
+            logger_(logPath, logMode) {}
 
 EpollServer::~EpollServer() {
     if (listenFd_ >= 0) {
@@ -78,6 +81,7 @@ void EpollServer::run() {
               << ", trigger=" << (triggerMode_ == TriggerMode::ET ? "ET" : "LT")
               << ", model=" << (eventModel_ == EventModel::Reactor ? "Reactor" : "Proactor")
               << "\n";
+    logger_.info("server started");
     eventLoop();
 }
 
@@ -135,6 +139,7 @@ void EpollServer::eventLoop() {
             if (errno == EINTR) {
                 continue;
             }
+            logger_.error("epoll_wait failed");
             throw std::runtime_error("epoll_wait() failed");
         }
 
@@ -172,6 +177,7 @@ void EpollServer::acceptClients() {
                 continue;
             }
             std::cerr << "accept failed: errno=" << errno << "\n";
+            logger_.error("accept failed, errno=" + std::to_string(errno));
             return;
         }
 
@@ -181,6 +187,7 @@ void EpollServer::acceptClients() {
         }
 
         addClient(clientFd);
+        logger_.info("client accepted, fd=" + std::to_string(clientFd));
 
         if (triggerMode_ == TriggerMode::LT) {
             return;
@@ -254,6 +261,7 @@ void EpollServer::processAndReply(int fd, const std::string& data) {
             std::lock_guard<std::mutex> lock(connMutex_);
             readBuffers_.erase(fd);
         }
+        logger_.error("parse error, fd=" + std::to_string(fd));
         sendAllAndClose(fd, buildResponse("Bad Request\n", "text/plain; charset=utf-8", "400 Bad Request"));
         return;
     }
@@ -264,6 +272,7 @@ void EpollServer::processAndReply(int fd, const std::string& data) {
     }
 
     const HttpResponse resp = app_.handle(req);
+    logger_.info("request handled, fd=" + std::to_string(fd) + ", method=" + req.method + ", path=" + req.path + ", status=" + resp.status);
     sendAllAndClose(fd, buildResponse(resp.body, resp.contentType, resp.status));
 }
 

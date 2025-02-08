@@ -16,6 +16,7 @@ add_executable(openmp_webserver
     src/http_parser.cpp
     src/user_repository.cpp
     src/web_app.cpp
+    src/logger.cpp
 )
 
 target_compile_options(openmp_webserver PRIVATE -Wall -Wextra -Wpedantic)

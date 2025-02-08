@@ -1,6 +1,7 @@
 #pragma once
 
 #include "http_parser.h"
+#include "logger.h"
 #include "thread_pool.h"
 #include "web_app.h"
 
@@ -26,7 +27,9 @@ public:
                 TriggerMode triggerMode,
                 EventModel eventModel,
                 const std::string& dbPath,
-                const std::string& staticRoot);
+                const std::string& staticRoot,
+                const std::string& logPath,
+                LogMode logMode);
     ~EpollServer();
 
     EpollServer(const EpollServer&) = delete;
@@ -57,6 +60,7 @@ private:
     ThreadPool threadPool_;
     HttpParser parser_;
     WebApp app_;
+    Logger logger_;
 
     std::mutex connMutex_;
     std::unordered_map<int, std::string> readBuffers_;
