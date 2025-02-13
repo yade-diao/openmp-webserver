@@ -20,9 +20,14 @@ public:
 private:
     HttpResponse handleAuth(const HttpRequest& request);
     HttpResponse handleMedia(const HttpRequest& request);
+    HttpResponse handleUpload(const HttpRequest& request);
+    HttpResponse handleDownload(const HttpRequest& request);
 
     static std::string getFormValue(const std::string& body, const std::string& key);
+    static std::string getQueryValue(const std::string& query, const std::string& key);
+    static bool isSafeFileName(const std::string& fileName);
 
     UserRepository repo_;
     std::string staticRoot_;
+    std::string uploadRoot_;
 };

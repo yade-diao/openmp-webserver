@@ -6,7 +6,7 @@
 - 触发模式：支持 LT / ET
 - 事件模型：支持 Reactor / 模拟 Proactor
 - HTTP：状态机解析，支持 GET / POST
-- 业务：用户注册 / 登录（SQLite）+ 图片/视频文件访问
+- 业务：用户注册 / 登录（SQLite）+ 图片/视频访问 + 文件上传/公共下载
 - 日志：同步/异步日志
 
 > 注意：当前实现依赖 epoll，仅支持 Linux/WSL 运行。
@@ -28,8 +28,6 @@ openmp-webserver/
 ```
 
 ## 2. 环境准备（WSL Ubuntu）
-
-在 WSL 中安装依赖：
 
 ```bash
 sudo apt-get update
@@ -123,6 +121,30 @@ curl -i "http://127.0.0.1:8080/media/demo.jpg"
 curl -i "http://127.0.0.1:8080/media/demo.mp4"
 ```
 
+### 5.4 上传文件（上传后所有人可下载）
+
+- 路径：`POST /upload?name=<filename>`
+- 请求体：原始二进制文件内容
+- 存储目录：`<staticRoot>/uploads/`
+
+示例：
+
+```bash
+curl -i -X POST "http://127.0.0.1:8080/upload?name=sample.bin" \
+	--data-binary @./sample.bin
+```
+
+### 5.5 下载上传文件（公开）
+
+- 路径：`GET /files/<filename>`
+- 任何用户都可以下载，只要知道文件名
+
+示例：
+
+```bash
+curl -i "http://127.0.0.1:8080/files/sample.bin" -o downloaded.bin
+```
+
 ## 6. 核心流程（新手理解版）
 
 1. `main.cpp` 解析参数，创建 `EpollServer`。
@@ -175,3 +197,14 @@ curl -i "http://127.0.0.1:8080/media/demo.mp4"
 - 缺少完整自动化测试与压测脚本
 
 但它已经具备清晰分层和可扩展骨架，适合继续迭代。
+
+## 10. 并发测试（Webbench）
+
+项目提供 Webbench 脚本用于压测：
+
+```bash
+bash tests/webbench_access.sh http://127.0.0.1:8080 200 30
+bash tests/webbench_upload_download.sh http://127.0.0.1:8080 100 200 20
+```
+
+详细说明见 `tests/README.md`。
