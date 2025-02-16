@@ -48,6 +48,8 @@ int main(int argc, char** argv) {
     std::string dbPath = "./webserver.db";
     std::string logPath = "./server.log";
     LogMode logMode = LogMode::Sync;
+    bool useOpenMP = false;
+    int processRounds = 64;
 
     if (workerCount == 0) {
         workerCount = 8;
@@ -80,13 +82,39 @@ int main(int argc, char** argv) {
     if (argc >= 9) {
         logMode = parseLogMode(argv[8]);
     }
+    if (argc >= 10) {
+        const std::string ompArg = argv[9];
+        if (ompArg == "omp") {
+            useOpenMP = true;
+        } else if (ompArg == "noomp") {
+            useOpenMP = false;
+        } else {
+            std::cerr << "Invalid openmp mode: " << ompArg << " (use omp or noomp)\n";
+            return 1;
+        }
+    }
+    if (argc >= 11) {
+        const int parsed = std::atoi(argv[10]);
+        if (parsed > 0) {
+            processRounds = parsed;
+        }
+    }
 
     try {
-        EpollServer server(port, workerCount, triggerMode, eventModel, dbPath, staticRoot, logPath, logMode);
+        EpollServer server(port,
+                           workerCount,
+                           triggerMode,
+                           eventModel,
+                           dbPath,
+                           staticRoot,
+                           logPath,
+                           logMode,
+                           useOpenMP,
+                           processRounds);
         server.run();
     } catch (const std::exception& ex) {
         std::cerr << "Fatal: " << ex.what() << "\n";
-        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async]\n";
+        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async] [omp|noomp] [processRounds]\n";
         return 1;
     }
 

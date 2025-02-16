@@ -62,8 +62,11 @@ std::pair<std::string, std::string> splitPathAndQuery(const std::string& target)
 }
 } // namespace
 
-WebApp::WebApp(const std::string& dbPath, const std::string& staticRoot)
-    : repo_(dbPath), staticRoot_(staticRoot), uploadRoot_(staticRoot + "/uploads") {
+WebApp::WebApp(const std::string& dbPath, const std::string& staticRoot, bool useOpenMP, int processRounds)
+    : repo_(dbPath),
+      processor_(useOpenMP, processRounds),
+      staticRoot_(staticRoot),
+      uploadRoot_(staticRoot + "/uploads") {
     std::filesystem::create_directories(uploadRoot_);
 }
 
@@ -145,12 +148,25 @@ HttpResponse WebApp::handleUpload(const HttpRequest& request) {
         content = getQueryValue(query, "content");
     }
 
+    const ProcessingStats stats = processor_.process(content);
+
     const std::string fullPath = uploadRoot_ + "/" + fileName;
     if (!writeBinaryFile(fullPath, content)) {
         return {"500 Internal Server Error", "text/plain; charset=utf-8", "upload failed\n"};
     }
 
-    return {"200 OK", "text/plain; charset=utf-8", "upload success: /files/" + fileName + "\n"};
+    const std::string metaPath = fullPath + ".meta";
+    std::ostringstream meta;
+    meta << "checksum=" << stats.checksum << "\n";
+    meta << "process_us=" << stats.processMicros << "\n";
+    meta << "openmp=" << (processor_.useOpenMP() ? "on" : "off") << "\n";
+    (void)writeBinaryFile(metaPath, meta.str());
+
+    std::ostringstream resp;
+    resp << "upload success: /files/" << fileName << "\n";
+    resp << "checksum=" << stats.checksum << " process_us=" << stats.processMicros
+         << " openmp=" << (processor_.useOpenMP() ? "on" : "off") << "\n";
+    return {"200 OK", "text/plain; charset=utf-8", resp.str()};
 }
 
 HttpResponse WebApp::handleDownload(const HttpRequest& request) {
@@ -164,6 +180,9 @@ HttpResponse WebApp::handleDownload(const HttpRequest& request) {
     if (!readBinaryFile(fullPath, fileData)) {
         return {"404 Not Found", "text/plain; charset=utf-8", "file not found\n"};
     }
+
+    // 下载前增加可切换的数据处理阶段，用于比较 OpenMP 开关性能差异。
+    (void)processor_.process(fileData);
 
     return {"200 OK", mimeFromPath(fullPath), std::move(fileData)};
 }

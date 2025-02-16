@@ -57,12 +57,14 @@ EpollServer::EpollServer(uint16_t port,
                                                  const std::string& dbPath,
                                                  const std::string& staticRoot,
                                                  const std::string& logPath,
-                                                 LogMode logMode)
+                                                                                                 LogMode logMode,
+                                                                                                 bool useOpenMP,
+                                                                                                 int processRounds)
     : port_(port),
       triggerMode_(triggerMode),
       eventModel_(eventModel),
             threadPool_(workerCount),
-            app_(dbPath, staticRoot),
+                        app_(dbPath, staticRoot, useOpenMP, processRounds),
             logger_(logPath, logMode) {}
 
 EpollServer::~EpollServer() {

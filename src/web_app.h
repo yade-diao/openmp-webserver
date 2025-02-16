@@ -1,5 +1,6 @@
 #pragma once
 
+#include "data_processor.h"
 #include "http_parser.h"
 #include "user_repository.h"
 
@@ -13,7 +14,7 @@ struct HttpResponse {
 
 class WebApp {
 public:
-    WebApp(const std::string& dbPath, const std::string& staticRoot);
+    WebApp(const std::string& dbPath, const std::string& staticRoot, bool useOpenMP, int processRounds);
 
     HttpResponse handle(const HttpRequest& request);
 
@@ -28,6 +29,7 @@ private:
     static bool isSafeFileName(const std::string& fileName);
 
     UserRepository repo_;
+    DataProcessor processor_;
     std::string staticRoot_;
     std::string uploadRoot_;
 };

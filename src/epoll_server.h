@@ -29,7 +29,9 @@ public:
                 const std::string& dbPath,
                 const std::string& staticRoot,
                 const std::string& logPath,
-                LogMode logMode);
+                LogMode logMode,
+                bool useOpenMP,
+                int processRounds);
     ~EpollServer();
 
     EpollServer(const EpollServer&) = delete;

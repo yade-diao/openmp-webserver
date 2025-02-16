@@ -80,6 +80,8 @@ build-linux/openmp_webserver
 6. `dbPath`：SQLite 数据库文件路径
 7. `logPath`：日志文件路径
 8. `sync|async`：日志模式
+9. `omp|noomp`：上传/下载数据处理阶段是否启用 OpenMP（默认 `noomp`）
+10. `processRounds`：数据处理轮数（默认 `64`）
 
 ## 5. HTTP 接口说明
 
@@ -205,6 +207,7 @@ curl -i "http://127.0.0.1:8080/files/sample.bin" -o downloaded.bin
 ```bash
 bash tests/webbench_access.sh http://127.0.0.1:8080 200 30
 bash tests/webbench_upload_download.sh http://127.0.0.1:8080 100 200 20
+bash tests/compare_openmp.sh 18080 60 100 15 128
 ```
 
 详细说明见 `tests/README.md`。
