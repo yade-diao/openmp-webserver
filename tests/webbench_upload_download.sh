@@ -5,8 +5,9 @@ BASE_URL="${1:-http://127.0.0.1:8080}"
 UPLOAD_CLIENTS="${2:-100}"
 DOWNLOAD_CLIENTS="${3:-200}"
 SECONDS="${4:-20}"
+PAYLOAD_KB="${5:-1}"
 UPLOAD_FILE="bench_upload.bin"
-UPLOAD_CONTENT="hello_from_webbench"
+UPLOAD_CONTENT=""
 
 if ! command -v webbench >/dev/null 2>&1; then
   echo "webbench not found. install it first."
@@ -14,6 +15,7 @@ if ! command -v webbench >/dev/null 2>&1; then
 fi
 
 # 先准备一个下载目标文件（上传一次）
+UPLOAD_CONTENT="$(head -c "$((PAYLOAD_KB * 1024))" /dev/zero | tr '\0' a)"
 curl -fsS "${BASE_URL}/upload?name=${UPLOAD_FILE}&content=${UPLOAD_CONTENT}" >/dev/null
 
 echo "[upload] using GET /upload for webbench compatibility"
