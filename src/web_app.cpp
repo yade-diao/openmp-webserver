@@ -62,9 +62,14 @@ std::pair<std::string, std::string> splitPathAndQuery(const std::string& target)
 }
 } // namespace
 
-WebApp::WebApp(const std::string& dbPath, const std::string& staticRoot, bool useOpenMP, int processRounds)
+WebApp::WebApp(const std::string& dbPath,
+                             const std::string& staticRoot,
+                             int processRounds,
+                             std::size_t workerThreads,
+                             ComputeBackend backend)
     : repo_(dbPath),
-      processor_(useOpenMP, processRounds),
+            backgroundProcessor_(processRounds, workerThreads, backend),
+            backgroundPool_(1),
       staticRoot_(staticRoot),
       uploadRoot_(staticRoot + "/uploads") {
     std::filesystem::create_directories(uploadRoot_);
@@ -148,24 +153,18 @@ HttpResponse WebApp::handleUpload(const HttpRequest& request) {
         content = getQueryValue(query, "content");
     }
 
-    const ProcessingStats stats = processor_.process(content);
-
     const std::string fullPath = uploadRoot_ + "/" + fileName;
     if (!writeBinaryFile(fullPath, content)) {
         return {"500 Internal Server Error", "text/plain; charset=utf-8", "upload failed\n"};
     }
 
-    const std::string metaPath = fullPath + ".meta";
-    std::ostringstream meta;
-    meta << "checksum=" << stats.checksum << "\n";
-    meta << "process_us=" << stats.processMicros << "\n";
-    meta << "openmp=" << (processor_.useOpenMP() ? "on" : "off") << "\n";
-    (void)writeBinaryFile(metaPath, meta.str());
+    const std::uint64_t jobId = nextJobId_.fetch_add(1);
+    enqueueBackgroundProcess(fullPath, fileName, jobId);
 
     std::ostringstream resp;
     resp << "upload success: /files/" << fileName << "\n";
-    resp << "checksum=" << stats.checksum << " process_us=" << stats.processMicros
-         << " openmp=" << (processor_.useOpenMP() ? "on" : "off") << "\n";
+    resp << "mode=online-noomp background-" << backgroundProcessor_.backendName() << " job_id=" << jobId << "\n";
+    resp << "task status file: /files/" << fileName << ".task\n";
     return {"200 OK", "text/plain; charset=utf-8", resp.str()};
 }
 
@@ -181,10 +180,48 @@ HttpResponse WebApp::handleDownload(const HttpRequest& request) {
         return {"404 Not Found", "text/plain; charset=utf-8", "file not found\n"};
     }
 
-    // 下载前增加可切换的数据处理阶段，用于比较 OpenMP 开关性能差异。
-    (void)processor_.process(fileData);
-
+    // 在线下载路径保持 noomp，仅做文件读取与回包。
     return {"200 OK", mimeFromPath(fullPath), std::move(fileData)};
+}
+
+void WebApp::enqueueBackgroundProcess(const std::string& fullPath,
+                                      const std::string& fileName,
+                                      std::uint64_t jobId) {
+    const std::string taskPath = fullPath + ".task";
+    const std::string queued = "status=queued\njob_id=" + std::to_string(jobId) +
+                               "\nbackend=" + backgroundProcessor_.backendName() + "\n";
+    (void)writeBinaryFile(taskPath, queued);
+
+    backgroundPool_.enqueue([this, fullPath, fileName, taskPath, jobId]() {
+        (void)writeBinaryFile(taskPath,
+                              "status=running\njob_id=" + std::to_string(jobId) +
+                                  "\nbackend=" + std::string(backgroundProcessor_.backendName()) + "\n");
+
+        std::string fileData;
+        if (!readBinaryFile(fullPath, fileData)) {
+            (void)writeBinaryFile(taskPath,
+                                  "status=failed\njob_id=" + std::to_string(jobId) + "\nreason=read_failed\n");
+            return;
+        }
+
+        const ProcessingStats stats = backgroundProcessor_.process(fileData);
+
+        std::ostringstream meta;
+        meta << "checksum=" << stats.checksum << "\n";
+        meta << "process_us=" << stats.processMicros << "\n";
+        meta << "backend=" << backgroundProcessor_.backendName() << "\n";
+        meta << "threads=" << backgroundProcessor_.workerThreads() << "\n";
+        meta << "job_id=" << jobId << "\n";
+        (void)writeBinaryFile(fullPath + ".meta", meta.str());
+
+        std::ostringstream done;
+        done << "status=done\n";
+        done << "job_id=" << jobId << "\n";
+        done << "file=" << fileName << "\n";
+        done << "checksum=" << stats.checksum << "\n";
+        done << "process_us=" << stats.processMicros << "\n";
+        (void)writeBinaryFile(taskPath, done.str());
+    });
 }
 
 std::string WebApp::getFormValue(const std::string& body, const std::string& key) {

@@ -37,6 +37,16 @@ LogMode parseLogMode(const std::string& input) {
     }
     throw std::invalid_argument("log mode must be sync or async");
 }
+
+ComputeBackend parseBackend(const std::string& input) {
+    if (input == "openmp") {
+        return ComputeBackend::OpenMP;
+    }
+    if (input == "std") {
+        return ComputeBackend::StdQueue;
+    }
+    throw std::invalid_argument("backend must be openmp or std");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -48,11 +58,15 @@ int main(int argc, char** argv) {
     std::string dbPath = "./webserver.db";
     std::string logPath = "./server.log";
     LogMode logMode = LogMode::Sync;
-    bool useOpenMP = false;
     int processRounds = 64;
+    std::size_t workerThreads = std::thread::hardware_concurrency();
+    ComputeBackend backend = ComputeBackend::OpenMP;
 
     if (workerCount == 0) {
         workerCount = 8;
+    }
+    if (workerThreads == 0) {
+        workerThreads = 4;
     }
 
     if (argc >= 2) {
@@ -83,21 +97,19 @@ int main(int argc, char** argv) {
         logMode = parseLogMode(argv[8]);
     }
     if (argc >= 10) {
-        const std::string ompArg = argv[9];
-        if (ompArg == "omp") {
-            useOpenMP = true;
-        } else if (ompArg == "noomp") {
-            useOpenMP = false;
-        } else {
-            std::cerr << "Invalid openmp mode: " << ompArg << " (use omp or noomp)\n";
-            return 1;
+        const int parsed = std::atoi(argv[9]);
+        if (parsed > 0) {
+            processRounds = parsed;
         }
     }
     if (argc >= 11) {
         const int parsed = std::atoi(argv[10]);
         if (parsed > 0) {
-            processRounds = parsed;
+            workerThreads = static_cast<std::size_t>(parsed);
         }
+    }
+    if (argc >= 12) {
+        backend = parseBackend(argv[11]);
     }
 
     try {
@@ -109,12 +121,13 @@ int main(int argc, char** argv) {
                            staticRoot,
                            logPath,
                            logMode,
-                           useOpenMP,
-                           processRounds);
+                           processRounds,
+                           workerThreads,
+                           backend);
         server.run();
     } catch (const std::exception& ex) {
         std::cerr << "Fatal: " << ex.what() << "\n";
-        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async] [omp|noomp] [processRounds]\n";
+        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async] [processRounds] [computeThreads] [openmp|std]\n";
         return 1;
     }
 

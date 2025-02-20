@@ -30,8 +30,9 @@ public:
                 const std::string& staticRoot,
                 const std::string& logPath,
                 LogMode logMode,
-                bool useOpenMP,
-                int processRounds);
+                int processRounds,
+                std::size_t workerThreads,
+                ComputeBackend backend);
     ~EpollServer();
 
     EpollServer(const EpollServer&) = delete;

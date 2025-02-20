@@ -1,4 +1,5 @@
 build/
+build-linux/
 .vs/
 *.exe
 *.pdb
@@ -6,3 +7,6 @@ build/
 *.ilk
 *.VC.db
 *.VC.VC.opendb
+server.log
+webserver.db
+static/uploads/
