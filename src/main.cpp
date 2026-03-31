@@ -1,135 +1,53 @@
-#include "epoll_server.h"
+#include "server.h"
 
 #include <cstdlib>
-#include <exception>
 #include <iostream>
-#include <stdexcept>
 #include <string>
-#include <thread>
 
-namespace {
-TriggerMode parseTriggerMode(const std::string& input) {
-    if (input == "lt" || input == "LT") {
-        return TriggerMode::LT;
-    }
-    if (input == "et" || input == "ET") {
-        return TriggerMode::ET;
-    }
-    throw std::invalid_argument("trigger mode must be lt or et");
-}
-
-EventModel parseEventModel(const std::string& input) {
-    if (input == "reactor") {
-        return EventModel::Reactor;
-    }
-    if (input == "proactor") {
-        return EventModel::Proactor;
-    }
-    throw std::invalid_argument("event model must be reactor or proactor");
-}
-
-LogMode parseLogMode(const std::string& input) {
-    if (input == "sync") {
-        return LogMode::Sync;
-    }
-    if (input == "async") {
-        return LogMode::Async;
-    }
-    throw std::invalid_argument("log mode must be sync or async");
-}
-
-ComputeBackend parseBackend(const std::string& input) {
-    if (input == "openmp") {
-        return ComputeBackend::OpenMP;
-    }
-    if (input == "std") {
-        return ComputeBackend::StdQueue;
-    }
-    throw std::invalid_argument("backend must be openmp or std");
-}
-} // namespace
-
+// Parses startup arguments and runs the HTTP server.
 int main(int argc, char** argv) {
-    uint16_t port = 8080;
-    std::size_t workerCount = std::thread::hardware_concurrency();
-    TriggerMode triggerMode = TriggerMode::LT;
-    EventModel eventModel = EventModel::Reactor;
+    int port = 8080;
     std::string staticRoot = "./static";
-    std::string dbPath = "./webserver.db";
-    std::string logPath = "./server.log";
-    LogMode logMode = LogMode::Sync;
-    int processRounds = 64;
-    std::size_t workerThreads = std::thread::hardware_concurrency();
-    ComputeBackend backend = ComputeBackend::OpenMP;
-
-    if (workerCount == 0) {
-        workerCount = 8;
-    }
-    if (workerThreads == 0) {
-        workerThreads = 4;
-    }
+    int rounds = 64;
+    int workers = 4;
+    BackendType backend = BACKEND_OPENMP;
 
     if (argc >= 2) {
-        port = static_cast<uint16_t>(std::atoi(argv[1]));
+        port = std::atoi(argv[1]);
+        if (port <= 0) {
+            port = 8080;
+        }
     }
     if (argc >= 3) {
-        const int parsed = std::atoi(argv[2]);
-        if (parsed > 0) {
-            workerCount = static_cast<std::size_t>(parsed);
-        }
+        staticRoot = argv[2];
     }
     if (argc >= 4) {
-        triggerMode = parseTriggerMode(argv[3]);
+        rounds = std::atoi(argv[3]);
+        if (rounds <= 0) {
+            rounds = 64;
+        }
     }
     if (argc >= 5) {
-        eventModel = parseEventModel(argv[4]);
+        workers = std::atoi(argv[4]);
+        if (workers <= 0) {
+            workers = 4;
+        }
     }
     if (argc >= 6) {
-        staticRoot = argv[5];
-    }
-    if (argc >= 7) {
-        dbPath = argv[6];
-    }
-    if (argc >= 8) {
-        logPath = argv[7];
-    }
-    if (argc >= 9) {
-        logMode = parseLogMode(argv[8]);
-    }
-    if (argc >= 10) {
-        const int parsed = std::atoi(argv[9]);
-        if (parsed > 0) {
-            processRounds = parsed;
+        const std::string b = argv[5];
+        if (b == "serial") {
+            backend = BACKEND_SERIAL;
+        } else if (b == "pthread") {
+            backend = BACKEND_PTHREAD;
+        } else {
+            backend = BACKEND_OPENMP;
         }
-    }
-    if (argc >= 11) {
-        const int parsed = std::atoi(argv[10]);
-        if (parsed > 0) {
-            workerThreads = static_cast<std::size_t>(parsed);
-        }
-    }
-    if (argc >= 12) {
-        backend = parseBackend(argv[11]);
     }
 
-    try {
-        EpollServer server(port,
-                           workerCount,
-                           triggerMode,
-                           eventModel,
-                           dbPath,
-                           staticRoot,
-                           logPath,
-                           logMode,
-                           processRounds,
-                           workerThreads,
-                           backend);
-        server.run();
-    } catch (const std::exception& ex) {
-        std::cerr << "Fatal: " << ex.what() << "\n";
-        std::cerr << "Usage: ./openmp_webserver [port] [workerCount] [lt|et] [reactor|proactor] [staticRoot] [dbPath] [logPath] [sync|async] [processRounds] [computeThreads] [openmp|std]\n";
+    Server server(port, staticRoot, rounds, workers, backend);
+    if (!server.run()) {
+        std::cerr << "Usage: ./openmp_webserver [port] [staticRoot] [rounds] [workers] [openmp|pthread|serial]\n";
         return 1;
     }
-
     return 0;
 }
