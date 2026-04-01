@@ -16,6 +16,8 @@
 namespace {
 const int MAX_EVENTS = 256;
 const int BUF_SIZE = 4096;
+const char kEncMagic[] = "ENC1";
+const char kXorKey[] = "openmp-webserver-demo-key";
 
 // Sets a socket file descriptor to non-blocking mode.
 bool set_non_blocking(int fd) {
@@ -50,6 +52,43 @@ unsigned long long parse_checksum(const std::string& meta) {
     std::string::size_type e = meta.find('\n', p);
     std::string v = (e == std::string::npos) ? meta.substr(p + key.size()) : meta.substr(p + key.size(), e - (p + key.size()));
     return static_cast<unsigned long long>(strtoull(v.c_str(), NULL, 10));
+}
+
+// Applies a simple XOR stream transform for demo encryption/decryption.
+std::string xor_transform(const std::string& input) {
+    std::string out = input;
+    const std::size_t key_len = sizeof(kXorKey) - 1U;
+    if (key_len == 0) {
+        return out;
+    }
+    std::size_t i = 0;
+    while (i < out.size()) {
+        out[i] = static_cast<char>(static_cast<unsigned char>(out[i]) ^ static_cast<unsigned char>(kXorKey[i % key_len]));
+        ++i;
+    }
+    return out;
+}
+
+// Returns true if payload starts with the encryption marker.
+bool is_encrypted_payload(const std::string& payload) {
+    return payload.size() >= 4U && payload[0] == kEncMagic[0] && payload[1] == kEncMagic[1] && payload[2] == kEncMagic[2] && payload[3] == kEncMagic[3];
+}
+
+// Prefixes marker and encrypts data for on-disk storage.
+std::string encrypt_payload(const std::string& plain) {
+    std::string out;
+    out.reserve(4U + plain.size());
+    out.append(kEncMagic, 4U);
+    out += xor_transform(plain);
+    return out;
+}
+
+// Decrypts payload if marker exists, otherwise returns original bytes.
+std::string decrypt_payload_if_needed(const std::string& stored) {
+    if (!is_encrypted_payload(stored)) {
+        return stored;
+    }
+    return xor_transform(stored.substr(4U));
 }
 }
 
@@ -105,8 +144,8 @@ bool Server::run() {
     }
     pthread_create(&worker_tid_, NULL, &Server::worker_entry, this);
 
-    std::printf("server listening on 0.0.0.0:%d backend=%s rounds=%d workers=%d\n",
-                port_, processor_.backendName(), rounds_, workers_);
+        printf("server listening on 0.0.0.0:%d backend=%s rounds=%d workers=%d\n",
+            port_, processor_.backendName(), rounds_, workers_);
     event_loop();
     return true;
 }
@@ -339,8 +378,10 @@ std::string Server::handle_get_file(const std::string& path, std::string& status
     content_type = "application/octet-stream";
     if (file_name.find(".meta") != std::string::npos || file_name.find(".task") != std::string::npos) {
         content_type = "text/plain; charset=utf-8";
+        return data;
     }
-    return data;
+
+    return decrypt_payload_if_needed(data);
 }
 
 // Re-runs processing on a file and compares stored checksum.
@@ -367,6 +408,8 @@ std::string Server::handle_compare(const std::string& target, std::string& statu
         status = "404 Not Found";
         return "file not found\n";
     }
+
+    data = decrypt_payload_if_needed(data);
 
     Processor p(rounds_, workers_, b);
     ProcessingStats s = p.process(data);
@@ -444,11 +487,18 @@ void Server::worker_loop() {
 
         ProcessingStats s = processor_.process(data);
 
+        const std::string encrypted_data = encrypt_payload(data);
+        if (!write_binary(job.full_path, encrypted_data)) {
+            write_binary(task_path, "status=failed\nreason=encrypt_write_failed\n");
+            continue;
+        }
+
         std::ostringstream meta;
         meta << "checksum=" << s.checksum << "\n";
         meta << "process_us=" << s.process_us << "\n";
         meta << "backend=" << processor_.backendName() << "\n";
         meta << "threads=" << processor_.workers() << "\n";
+        meta << "encrypted=1\n";
         meta << "job_id=" << job.id << "\n";
         write_binary(job.full_path + ".meta", meta.str());
 
